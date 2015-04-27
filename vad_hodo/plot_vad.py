@@ -4,8 +4,6 @@ from datetime import datetime, timedelta
 import urllib2
 
 import numpy as np
-from scipy.interpolate import interp1d
-from scipy.integrate import simps, trapz
 
 import sys
 
@@ -219,14 +217,14 @@ def compute_parameters(wind_dir, wind_spd, altitude, storm_dir, storm_spd):
     def compute_shear(u1, v1, u2, v2):
         return u2 - u1, v2 - v1
 
-    def clip_profile(prof, alt, clip_alt, intrp):
+    def clip_profile(prof, alt, clip_alt, intrp_prof):
         try:
             idx_clip = np.where((altitude[:-1] <= clip_alt) & (altitude[1:] > clip_alt))[0][0]
         except IndexError:
             return np.nan * np.ones(prof.size)
 
         prof_clip = prof[:(idx_clip + 1)]
-        prof_clip = np.append(prof_clip, intrp(clip_alt))
+        prof_clip = np.append(prof_clip, intrp_prof)
 
         return np.array(prof_clip)
 
@@ -241,12 +239,12 @@ def compute_parameters(wind_dir, wind_spd, altitude, storm_dir, storm_spd):
     storm_u = -storm_spd * np.sin(storm_dir)
     storm_v = -storm_spd * np.cos(storm_dir)
 
-    u_intrp = interp1d(altitude, u, bounds_error=False)
-    v_intrp = interp1d(altitude, v, bounds_error=False)
+    u_1km, u_3km, u_6km = np.interp([ 1., 3., 6. ], altitude, u, left=np.nan, right=np.nan)
+    v_1km, v_3km, v_6km = np.interp([ 1., 3., 6. ], altitude, v, left=np.nan, right=np.nan)
 
-    u_shear_1km, v_shear_1km = compute_shear(u[0], v[0], u_intrp(1), v_intrp(1))
-    u_shear_3km, v_shear_3km = compute_shear(u[0], v[0], u_intrp(3), v_intrp(3))
-    u_shear_6km, v_shear_6km = compute_shear(u[0], v[0], u_intrp(6), v_intrp(6))
+    u_shear_1km, v_shear_1km = compute_shear(u[0], v[0], u_1km, v_1km)
+    u_shear_3km, v_shear_3km = compute_shear(u[0], v[0], u_3km, v_3km)
+    u_shear_6km, v_shear_6km = compute_shear(u[0], v[0], u_6km, v_6km)
 
     params['shear_mag_1km'] = np.hypot(u_shear_1km, v_shear_1km)
     params['shear_mag_3km'] = np.hypot(u_shear_3km, v_shear_3km)
@@ -255,15 +253,15 @@ def compute_parameters(wind_dir, wind_spd, altitude, storm_dir, storm_spd):
     sr_u = u - storm_u
     sr_v = v - storm_v
 
-    sru_0_1km = clip_profile(sr_u, altitude, 1, u_intrp) / 1.94
-    srv_0_1km = clip_profile(sr_v, altitude, 1, v_intrp) / 1.94
+    sru_0_1km = clip_profile(sr_u, altitude, 1, u_1km) / 1.94
+    srv_0_1km = clip_profile(sr_v, altitude, 1, v_1km) / 1.94
     alt_0_1km = clip_profile(altitude, altitude, 1, lambda x: x)
 
     layers = (sru_0_1km[1:] * srv_0_1km[:-1]) - (sru_0_1km[:-1] * srv_0_1km[1:])
     params['srh_1km'] = layers.sum()
 
-    sru_0_3km = clip_profile(sr_u, altitude, 3, u_intrp) / 1.94
-    srv_0_3km = clip_profile(sr_v, altitude, 3, v_intrp) / 1.94
+    sru_0_3km = clip_profile(sr_u, altitude, 3, u_3km) / 1.94
+    srv_0_3km = clip_profile(sr_v, altitude, 3, v_3km) / 1.94
     alt_0_3km = clip_profile(altitude, altitude, 3, lambda x: x)
 
     layers = (sru_0_3km[1:] * srv_0_3km[:-1]) - (sru_0_3km[:-1] * srv_0_3km[1:])
@@ -298,8 +296,8 @@ def plot_hodograph(wind_dir, wind_spd, altitude, rms_error, img_title, img_file_
     u = -wind_spd * np.sin(wind_dir)
     v = -wind_spd * np.cos(wind_dir)
 
-    u_marker = interp1d(altitude, u, bounds_error=False)(np.arange(16, dtype=float))
-    v_marker = interp1d(altitude, v, bounds_error=False)(np.arange(16, dtype=float))
+    u_marker = np.interp(np.arange(16, dtype=float), altitude, u, left=np.nan, right=np.nan)
+    v_marker = np.interp(np.arange(16, dtype=float), altitude, v, left=np.nan, right=np.nan)
     ws_marker = np.hypot(u_marker, v_marker)
     wd_marker = np.arctan2(-u_marker, -v_marker)
 
