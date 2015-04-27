@@ -25,7 +25,8 @@ Modified:   26 April 2015
 Usage:
             plot_vad.py RADAR_ID STORM_MOTION [ RADAR_ID STORM_MOTION ... ]
 
-STORM_MOTION takes the form DDD/SS, where DDD is the direction the storm is coming from, and SS is the speed in knots."
+RADAR_ID is the 4-character identifier for the radar (e.g. KTLX, KFWS, etc.). 
+STORM_MOTION takes the form DDD/SS, where DDD is the direction the storm is coming from, and SS is the speed in knots (e.g. 240/25)."
 """
 
 class VADFile(object):
@@ -362,7 +363,13 @@ def plot_hodograph(wind_dir, wind_spd, altitude, rms_error, img_title, img_file_
     return
 
 def main():
-    usage = "Usage:\n\tplot_vad.py RADAR_ID STORM_MOTION [ RADAR_ID STORM_MOTION ... ]\n\nSTORM_MOTION takes the form DDD/SS, where DDD is the direction the storm is coming from, and SS is the speed in knots.\n"
+    usage = """
+Usage:
+            plot_vad.py RADAR_ID STORM_MOTION [ RADAR_ID STORM_MOTION ... ]
+
+RADAR_ID is the 4-character identifier for the radar (e.g. KTLX, KFWS, etc.). 
+STORM_MOTION takes the form DDD/SS, where DDD is the direction the storm is coming from, and SS is the speed in knots (e.g. 240/25)."
+"""
     if len(sys.argv) > 1 and len(sys.argv) % 2 == 1:
         try:
             radar_ids = sys.argv[1::2]
