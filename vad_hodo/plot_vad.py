@@ -7,12 +7,26 @@ import numpy as np
 from scipy.interpolate import interp1d
 from scipy.integrate import simps, trapz
 
+import sys
+
 import matplotlib
 matplotlib.use('agg')
 import pylab
 from matplotlib.lines import Line2D
 from matplotlib.transforms import Bbox
 from matplotlib.transforms import TransformedBbox
+
+"""
+plot_vad.py
+Author:     Tim Supinie (tsupinie@ou.edu)
+Completed:  May 2012
+Modified:   26 April 2015
+                Fixed SRH calculations.
+Usage:
+            plot_vad.py RADAR_ID STORM_MOTION [ RADAR_ID STORM_MOTION ... ]
+
+STORM_MOTION takes the form DDD/SS, where DDD is the direction the storm is coming from, and SS is the speed in knots."
+"""
 
 class VADFile(object):
     def __init__(self, file):
@@ -79,7 +93,7 @@ class VADFile(object):
         offset_tabular   = self._read('i')
 
         self._time = datetime(1969, 12, 31, 0, 0, 0) + timedelta(days=scan_date, seconds=scan_time)
-        print self._time
+        print "Valid time:", self._time
 
         return offset_symbology > 0, offset_graphic > 0, offset_tabular > 0
 
@@ -200,16 +214,6 @@ class VADFile(object):
         else:
             return list(data)
 
-def verticalDerivative(data, height):
-    derivative = np.zeros(data.shape)
-    alpha = (height[2:] - height[1:-1]) / (height[1:-1] - height[:-2])
-
-    derivative[1:-1] = (data[2:] + (alpha - 1) * data[1:-1] - alpha * data[:-2]) / (2 * alpha * (height[1:-1] - height[:-2]))
-    derivative[0] = (data[1] - data[0]) / (height[1] - height[0])
-    derivative[-1] = (data[-1] - data[-2]) / (height[-1] - height[-2])
-
-    return derivative
-
 def compute_parameters(wind_dir, wind_spd, altitude, storm_dir, storm_spd):
     def compute_shear(u1, v1, u2, v2):
         return u2 - u1, v2 - v1
@@ -236,19 +240,8 @@ def compute_parameters(wind_dir, wind_spd, altitude, storm_dir, storm_spd):
     storm_u = -storm_spd * np.sin(storm_dir)
     storm_v = -storm_spd * np.cos(storm_dir)
 
-    dudz = verticalDerivative(u, altitude)
-    dvdz = verticalDerivative(v, altitude)
-
-#   print u
-#   print v
-#   print dudz
-#   print dvdz
-#   print altitude
-
     u_intrp = interp1d(altitude, u, bounds_error=False)
     v_intrp = interp1d(altitude, v, bounds_error=False)
-    dudz_intrp = interp1d(altitude, dudz, bounds_error=False)
-    dvdz_intrp = interp1d(altitude, dvdz, bounds_error=False)
 
     u_shear_1km, v_shear_1km = compute_shear(u[0], v[0], u_intrp(1), v_intrp(1))
     u_shear_3km, v_shear_3km = compute_shear(u[0], v[0], u_intrp(3), v_intrp(3))
@@ -263,8 +256,6 @@ def compute_parameters(wind_dir, wind_spd, altitude, storm_dir, storm_spd):
 
     sru_0_1km = clip_profile(sr_u, altitude, 1, u_intrp) / 1.94
     srv_0_1km = clip_profile(sr_v, altitude, 1, v_intrp) / 1.94
-#   dudz_0_1km = clip_profile(dudz, altitude, 1, dudz_intrp) / 1.94
-#   dvdz_0_1km = clip_profile(dvdz, altitude, 1, dvdz_intrp) / 1.94
     alt_0_1km = clip_profile(altitude, altitude, 1, lambda x: x)
 
     layers = (sru_0_1km[1:] * srv_0_1km[:-1]) - (sru_0_1km[:-1] * srv_0_1km[1:])
@@ -272,15 +263,10 @@ def compute_parameters(wind_dir, wind_spd, altitude, storm_dir, storm_spd):
 
     sru_0_3km = clip_profile(sr_u, altitude, 3, u_intrp) / 1.94
     srv_0_3km = clip_profile(sr_v, altitude, 3, v_intrp) / 1.94
-#   dudz_0_3km = clip_profile(dudz, altitude, 3, dudz_intrp) / 1.94
-#   dvdz_0_3km = clip_profile(dvdz, altitude, 3, dvdz_intrp) / 1.94
     alt_0_3km = clip_profile(altitude, altitude, 3, lambda x: x)
 
     layers = (sru_0_3km[1:] * srv_0_3km[:-1]) - (sru_0_3km[:-1] * srv_0_3km[1:])
     params['srh_3km'] = layers.sum()
-
-#   params['srh_1km'] = -trapz(sru_0_1km * dvdz_0_1km - srv_0_1km * dudz_0_1km, alt_0_1km) / 2
-#   params['srh_3km'] = -trapz(sru_0_3km * dvdz_0_3km - srv_0_3km * dudz_0_3km, alt_0_3km) / 2
 
     return params
 
@@ -376,16 +362,31 @@ def plot_hodograph(wind_dir, wind_spd, altitude, rms_error, img_title, img_file_
     return
 
 def main():
-    storm_dir = [ 260,    260,    ] # 251,    312,    282, ]
-    storm_spd = [ 3,      3,      ] # 25,     9,      12,  ]
-    radar_ids = ['KGRK',  'KFWS', ] #'KTWX', 'KVNX', 'KLZK']
+    usage = "Usage:\n\tplot_vad.py RADAR_ID STORM_MOTION [ RADAR_ID STORM_MOTION ... ]\n\nSTORM_MOTION takes the form DDD/SS, where DDD is the direction the storm is coming from, and SS is the speed in knots.\n"
+    if len(sys.argv) > 1 and len(sys.argv) % 2 == 1:
+        try:
+            radar_ids = sys.argv[1::2]
+            storm_motions = sys.argv[2::2]
+
+            storm_dir, storm_spd = zip(*[ tuple(int(v) for v in m.split("/")) for m in storm_motions ])
+        except:
+            print usage
+            sys.exit()
+    else:
+        print usage
+        sys.exit()
+
+    np.seterr(all='ignore')
 
     for rid, sd, ss in zip(radar_ids, storm_dir, storm_spd):
 
         print "Plotting VAD for %s ..." % rid
 
         url = "ftp://tgftp.nws.noaa.gov/SL.us008001/DF.of/DC.radar/DS.48vwp/SI.%s/sn.last" % rid.lower()
-        vad = VADFile(urllib2.urlopen(url))
+        try:
+            vad = VADFile(urllib2.urlopen(url))
+        except urllib2.URLError:
+            print "Could not find radar site '%s'" % rid.upper()
 
         vad_list = []
         for page in vad._text_message:
@@ -406,9 +407,6 @@ def main():
             rms_error.append(float(values[6]))
             slant_range.append(float(values[8]))
             elev_angle.append(float(values[9]))
-
-#       altitude_msl = (np.array(altitude) + vad._radar_elevation) / 3281.
-#       altitude_agl = np.array(altitude) / 3281.
 
         wind_dir = np.array(wind_dir)
         wind_spd = np.array(wind_spd)
