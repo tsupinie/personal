@@ -5,7 +5,7 @@ import urllib2
 
 import numpy as np
 from scipy.interpolate import interp1d
-from scipy.integrate import simps
+from scipy.integrate import simps, trapz
 
 import matplotlib
 matplotlib.use('agg')
@@ -261,20 +261,26 @@ def compute_parameters(wind_dir, wind_spd, altitude, storm_dir, storm_spd):
     sr_u = u - storm_u
     sr_v = v - storm_v
 
-    sru_0_1km = clip_profile(sr_u, altitude, 1, u_intrp)
-    srv_0_1km = clip_profile(sr_v, altitude, 1, v_intrp)
-    dudz_0_1km = clip_profile(dudz, altitude, 1, dudz_intrp)
-    dvdz_0_1km = clip_profile(dvdz, altitude, 1, dvdz_intrp)
+    sru_0_1km = clip_profile(sr_u, altitude, 1, u_intrp) / 1.94
+    srv_0_1km = clip_profile(sr_v, altitude, 1, v_intrp) / 1.94
+#   dudz_0_1km = clip_profile(dudz, altitude, 1, dudz_intrp) / 1.94
+#   dvdz_0_1km = clip_profile(dvdz, altitude, 1, dvdz_intrp) / 1.94
     alt_0_1km = clip_profile(altitude, altitude, 1, lambda x: x)
 
-    sru_0_3km = clip_profile(sr_u, altitude, 3, u_intrp)
-    srv_0_3km = clip_profile(sr_v, altitude, 3, v_intrp)
-    dudz_0_3km = clip_profile(dudz, altitude, 3, dudz_intrp)
-    dvdz_0_3km = clip_profile(dvdz, altitude, 3, dvdz_intrp)
+    layers = (sru_0_1km[1:] * srv_0_1km[:-1]) - (sru_0_1km[:-1] * srv_0_1km[1:])
+    params['srh_1km'] = layers.sum()
+
+    sru_0_3km = clip_profile(sr_u, altitude, 3, u_intrp) / 1.94
+    srv_0_3km = clip_profile(sr_v, altitude, 3, v_intrp) / 1.94
+#   dudz_0_3km = clip_profile(dudz, altitude, 3, dudz_intrp) / 1.94
+#   dvdz_0_3km = clip_profile(dvdz, altitude, 3, dvdz_intrp) / 1.94
     alt_0_3km = clip_profile(altitude, altitude, 3, lambda x: x)
 
-    params['srh_1km'] = -simps(sru_0_1km * dvdz_0_1km - srv_0_1km * dudz_0_1km, alt_0_1km) * (6067.1 / (3.281 * 3600)) ** 2
-    params['srh_3km'] = -simps(sru_0_3km * dvdz_0_3km - srv_0_3km * dudz_0_3km, alt_0_3km) * (6067.1 / (3.281 * 3600)) ** 2
+    layers = (sru_0_3km[1:] * srv_0_3km[:-1]) - (sru_0_3km[:-1] * srv_0_3km[1:])
+    params['srh_3km'] = layers.sum()
+
+#   params['srh_1km'] = -trapz(sru_0_1km * dvdz_0_1km - srv_0_1km * dudz_0_1km, alt_0_1km) / 2
+#   params['srh_3km'] = -trapz(sru_0_3km * dvdz_0_3km - srv_0_3km * dudz_0_3km, alt_0_3km) / 2
 
     return params
 
@@ -305,6 +311,11 @@ def plot_hodograph(wind_dir, wind_spd, altitude, rms_error, img_title, img_file_
     u = -wind_spd * np.sin(wind_dir)
     v = -wind_spd * np.cos(wind_dir)
 
+    u_marker = interp1d(altitude, u, bounds_error=False)(np.arange(16, dtype=float))
+    v_marker = interp1d(altitude, v, bounds_error=False)(np.arange(16, dtype=float))
+    ws_marker = np.hypot(u_marker, v_marker)
+    wd_marker = np.arctan2(-u_marker, -v_marker)
+
     u_avg = (u[1:] + u[:-1]) / 2
     v_avg = (v[1:] + v[:-1]) / 2
 
@@ -321,6 +332,8 @@ def plot_hodograph(wind_dir, wind_spd, altitude, rms_error, img_title, img_file_
     color_index = np.where((rms_error[-1] >= rms_error_thresh[:-1]) & (rms_error[-1] < rms_error_thresh[1:]))[0][0]
     pylab.polar([ wind_dir_avg[-1], wind_dir[-1] ], [ wind_spd_avg[-1], wind_spd[-1] ], color=rms_error_colors[color_index], lw=1.5)
 
+    pylab.polar(wd_marker, ws_marker, ls='None', mec='k', mfc='k', marker='o', ms=4)
+
     if storm_motion != ():
         storm_direction, storm_speed = storm_motion
         pylab.plot(np.pi * storm_direction / 180., storm_speed, 'k+')
@@ -328,7 +341,8 @@ def plot_hodograph(wind_dir, wind_spd, altitude, rms_error, img_title, img_file_
     pylab.gca().set_theta_direction(-1)
     pylab.gca().set_theta_zero_location('S')
     pylab.gca().set_thetagrids(np.arange(0, 360, 30), labels=np.arange(0, 360, 30), frac=1.05)
-    pylab.gca().set_rgrids(np.arange(10, 70, 10), labels=np.arange(10, 60, 10), angle=15)
+    pylab.gca().set_rgrids(np.arange(10, 80, 10), labels=np.arange(10, 70, 10), angle=15)
+    pylab.ylim((0, 70))
 
     pylab.text(wind_dir[0], wind_spd[0], "%3.1f" % altitude[0], size='small', weight='bold')
     pylab.text(wind_dir[-1], wind_spd[-1], "%3.1f" % altitude[-1], size='small', weight='bold')
@@ -362,9 +376,9 @@ def plot_hodograph(wind_dir, wind_spd, altitude, rms_error, img_title, img_file_
     return
 
 def main():
-    storm_dir = [ 180, 160, 165, 250, 230 ]
-    storm_spd = [ 25, 28, 30, 20, 15 ]
-    radar_ids = ['KTLX', 'KVNX', 'KFDR', 'KINX']
+    storm_dir = [ 260,    260,    ] # 251,    312,    282, ]
+    storm_spd = [ 3,      3,      ] # 25,     9,      12,  ]
+    radar_ids = ['KGRK',  'KFWS', ] #'KTWX', 'KVNX', 'KLZK']
 
     for rid, sd, ss in zip(radar_ids, storm_dir, storm_spd):
 
