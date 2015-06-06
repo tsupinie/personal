@@ -7,24 +7,24 @@ import wave
 class Tone(object):
     pitches = [ 'C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B' ]
 
-    def __init__(self, pitch, volume, rate=44100):
+    def __init__(self, pitch, n_channels, bit_rate, dtype):
         self._pitch = pitch
-        self._vol = volume
         self._freq = Tone.pitch2Freq(pitch)
 
-        self._rate = rate
+        self._rate = bit_rate
+        self._dtype = dtype
         self._n_sample = 0
 
-        self._dt_max = np.iinfo(np.int16).max
-        self._dt_min = np.iinfo(np.int16).min
+        self._dt_max = np.iinfo(self._dtype).max
+        self._dt_min = np.iinfo(self._dtype).min
 
     def generate(self, size):
         samples = np.arange(self._n_sample, self._n_sample + size)
-        audio = self._vol * np.sin(2 * np.pi * samples * self._freq / self._rate)
+        audio = np.sin(2 * np.pi * samples * self._freq / self._rate)
 
         dt_mag = (self._dt_max - self._dt_min + 1) / 2
         dt_off = self._dt_min + dt_mag
-        dt_audio = (dt_mag * audio + dt_off).astype(np.int16)
+        dt_audio = (dt_mag * audio + dt_off).astype(self._dtype)
 
         self._n_sample += size
         return dt_audio
@@ -69,15 +69,31 @@ class Tone(object):
         return Tone.intvC0ToPitch(intv_c0 + interval)
 
 class Note(object):
-    def __init__(self, fundamental, harmonics):
+    def __init__(self, fundamental, harmonics, n_channels, bit_rate, dtype):
         self._fund = fundamental
         self._harm = harmonics
+        self._n_channels = n_channels
+        self._bit_rate = bit_rate
+        self._dtype = dtype
 
-        for intv, loudness in self._harm.iteritems():
-            pass
+        self._tones = []
+        self._vols = []
+        self._is_finished = False
+
+        for intv, loud in self._harm.iteritems():
+            harm_pitch = Tone.moveByInterval(self._fund, intv)
+            self._tones.append(Tone(harm_pitch, self._n_channels, self._bit_rate, self._dtype))
+            self._vols.append(loud)
 
     def generate(self, size):
-        pass
+        chunks = [ t.generate(size) for t in self._tones ]
+        return NoteGenerator.mix(chunks, self._vols, size)
+
+    def cutoff(self):
+        self._is_finished = True
+
+    def isFinished(self):
+        return self._is_finished
 
     def __eq__(self, other):
         is_eq = False
@@ -89,20 +105,41 @@ class Note(object):
         return not self.__eq__(other)
 
 class NoteGenerator(object):
-    def __init__(self):
+    def __init__(self, n_channels, bit_rate, dtype=np.int16):
+        self._n_channels = n_channels
+        self._dtype = dtype
+        self._bit_rate = bit_rate
+        self._master_volume = 0.25
+
+        self._harmonics = {0:1.}
         self._notes = []
+        self._volumes = []
         self._wave_data = []
 
-    def addNote(self, pitch):
-        self._notes.append(pitch)
+    def setTambre(self, harmonics):
+        self._harmonics = harmonics
 
-    def removeNote(self, pitch):
-        if pitch in self._notes:
-            self._notes.remove(pitch)
+    def setVolume(self, volume):
+        self._master_volume = volume
+
+    def addNote(self, pitch, loudness):
+        self._volumes.append(loudness)
+        self._notes.append(Note(pitch, self._harmonics, self._n_channels, self._bit_rate, self._dtype))
+
+    def removeNote(self, pitch, loudness):
+        note = Note(pitch, self._harmonics, self._n_channels, self._bit_rate, self._dtype)
+        if note in self._notes:
+            idx = self._notes.index(note)
+            self._notes[idx].cutoff()
 
     def generate(self, size=512):
+        finished_notes = [ n for n in self._notes if n.isFinished() ]
+        for n in finished_notes:
+            self._volumes.remove(self._volumes[self._notes.index(n)])
+            self._notes.remove(n)
+
         chunks = [ n.generate(size) for n in self._notes ]
-        mixed = NoteGenerator.mix(chunks, [ 0.25 for c in chunks ], size)
+        mixed = self._master_volume * NoteGenerator.mix(chunks, self._volumes, size)
         self._wave_data.append(mixed)
         return NoteGenerator.render(mixed)
 
@@ -143,13 +180,9 @@ if __name__ == "__main__":
 
     p = pyaudio.PyAudio()
 
-    tones = [
-        Tone('C5', 0.25),
-        Tone('E5', 0.25),
-        Tone('G5', 0.25),
-    ]
+    tones = [ 'C5', 'E5', 'G5' ]
 
-    gen = NoteGenerator()
+    gen = NoteGenerator(CHANNELS, RATE)
 
     def grabMore(in_data, frame_count, time_info, status):
         data = gen.generate(frame_count)
@@ -170,7 +203,7 @@ if __name__ == "__main__":
         try:
             sleep(1)
             if note_idx < len(tones):
-                gen.addNote(tones[note_idx])
+                gen.addNote(tones[note_idx], 0.25)
                 note_idx += 1
         except KeyboardInterrupt:
             print

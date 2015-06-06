@@ -9,11 +9,11 @@ def playNote(gen, keyNum, loudness):
     base = 24
     
     octave, pitch = divmod(keyNum - base, len(pitches))
-    t = Tone("%s%d" % (pitches[pitch], octave), loudness / (2 * 128.))
+    note = "%s%d" % (pitches[pitch], octave)
     if loudness > 0:
-        gen.addNote(t)
+        gen.addNote(note, loudness / 128.)
     else:
-        gen.removeNote(t)
+        gen.removeNote(note, loudness / 128.)
 
 def changeVolume(level):
     pass
@@ -62,7 +62,7 @@ def setupOutput():
     WIDTH = 2
     CHANNELS = 1
 
-    gen = NoteGenerator()
+    gen = NoteGenerator(CHANNELS, RATE)
     p = pyaudio.PyAudio()
 
     def grabMore(in_data, frame_count, time_info, status):
