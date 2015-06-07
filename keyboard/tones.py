@@ -7,27 +7,29 @@ import wave
 class Tone(object):
     pitches = [ 'C', 'C#', 'D', 'Eb', 'E', 'F', 'F#', 'G', 'Ab', 'A', 'Bb', 'B' ]
 
-    def __init__(self, pitch, n_channels, bit_rate, dtype):
+    def __init__(self, pitch, n_channels, bit_rate):
         self._pitch = pitch
         self._freq = Tone.pitch2Freq(pitch)
 
-        self._rate = bit_rate
-        self._dtype = dtype
-        self._n_sample = 0
+        self._has_cutoff = False
+        self._is_finished = False
 
-        self._dt_max = np.iinfo(self._dtype).max
-        self._dt_min = np.iinfo(self._dtype).min
+        self._rate = bit_rate
+        self._n_sample = 0
 
     def generate(self, size):
         samples = np.arange(self._n_sample, self._n_sample + size)
         audio = np.sin(2 * np.pi * samples * self._freq / self._rate)
 
-        dt_mag = (self._dt_max - self._dt_min + 1) / 2
-        dt_off = self._dt_min + dt_mag
-        dt_audio = (dt_mag * audio + dt_off).astype(self._dtype)
-
         self._n_sample += size
-        return dt_audio
+        return audio
+
+    def cutoff(self):
+        self._has_cutoff = True
+        self._is_finished = True
+
+    def isFinished(self):
+        return self._is_finished
 
     def __eq__(self, other):
         is_eq = False
@@ -69,20 +71,18 @@ class Tone(object):
         return Tone.intvC0ToPitch(intv_c0 + interval)
 
 class Note(object):
-    def __init__(self, fundamental, harmonics, n_channels, bit_rate, dtype):
+    def __init__(self, fundamental, harmonics, n_channels, bit_rate):
         self._fund = fundamental
         self._harm = harmonics
         self._n_channels = n_channels
         self._bit_rate = bit_rate
-        self._dtype = dtype
 
         self._tones = []
         self._vols = []
-        self._is_finished = False
 
         for intv, loud in self._harm.iteritems():
             harm_pitch = Tone.moveByInterval(self._fund, intv)
-            self._tones.append(Tone(harm_pitch, self._n_channels, self._bit_rate, self._dtype))
+            self._tones.append(Tone(harm_pitch, self._n_channels, self._bit_rate))
             self._vols.append(loud)
 
     def generate(self, size):
@@ -90,10 +90,11 @@ class Note(object):
         return NoteGenerator.mix(chunks, self._vols, size)
 
     def cutoff(self):
-        self._is_finished = True
+        for t in self._tones:
+            t.cutoff()
 
     def isFinished(self):
-        return self._is_finished
+        return all( t.isFinished() for t in self._tones )
 
     def __eq__(self, other):
         is_eq = False
@@ -124,10 +125,10 @@ class NoteGenerator(object):
 
     def addNote(self, pitch, loudness):
         self._volumes.append(loudness)
-        self._notes.append(Note(pitch, self._harmonics, self._n_channels, self._bit_rate, self._dtype))
+        self._notes.append(Note(pitch, self._harmonics, self._n_channels, self._bit_rate))
 
     def removeNote(self, pitch, loudness):
-        note = Note(pitch, self._harmonics, self._n_channels, self._bit_rate, self._dtype)
+        note = Note(pitch, self._harmonics, self._n_channels, self._bit_rate)
         if note in self._notes:
             idx = self._notes.index(note)
             self._notes[idx].cutoff()
@@ -141,17 +142,13 @@ class NoteGenerator(object):
         chunks = [ n.generate(size) for n in self._notes ]
         mixed = self._master_volume * NoteGenerator.mix(chunks, self._volumes, size)
         self._wave_data.append(mixed)
-        return NoteGenerator.render(mixed)
+        return NoteGenerator.render(mixed, self._dtype)
 
     def writeToFile(self, file_name):
-        RATE = 44100
-        WIDTH = 2
-        CHANNELS = 1
-
-        dat = NoteGenerator.render(np.concatenate(tuple(self._wave_data)))
+        dat = NoteGenerator.render(np.concatenate(tuple(self._wave_data)), self._dtype)
 
         wf = wave.open(file_name, 'w')
-        wf.setparams((CHANNELS, WIDTH, RATE, 0, 'NONE', 'not compressed'))
+        wf.setparams((self._n_channels, self._dtype.itemsize, self._bit_rate, 0, 'NONE', 'not compressed'))
         wf.writeframes(dat)
         wf.close()
 
@@ -163,9 +160,17 @@ class NoteGenerator(object):
         return mixed
 
     @staticmethod
-    def render(ary_data):
+    def render(ary_data, dtype):
         n_samples = len(ary_data)
-        data = struct.pack("%dh" % n_samples, *ary_data)
+
+        dt_max = np.iinfo(dtype).max
+        dt_min = np.iinfo(dtype).min
+
+        dt_mag = (dt_max - dt_min + 1) / 2
+        dt_off = dt_min + dt_mag
+        dt_audio = (dt_mag * ary_data + dt_off).astype(dtype)
+
+        data = struct.pack("%dh" % n_samples, *dt_audio)
         return data
 
 if __name__ == "__main__":
