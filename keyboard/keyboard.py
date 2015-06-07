@@ -60,7 +60,7 @@ def setupOutput():
     RATE = 44100
     CHUNK = 128
     WIDTH = 2
-    CHANNELS = 1
+    CHANNELS = 2
 
     gen = NoteGenerator(CHANNELS, RATE)
     p = pyaudio.PyAudio()
@@ -94,6 +94,18 @@ def main():
 
     usb_dev = setupUSB()
     gen, pya = setupOutput()
+
+    gen.setTambre({
+        -12:0, 
+        7:0,
+        0:0,
+        12:0,
+        19:0,
+        24:0,
+        28:0,
+        31:0,
+        36:0,
+    })
 
     while True:
         try:

@@ -14,19 +14,32 @@ class Tone(object):
         self._has_cutoff = False
         self._is_finished = False
 
+        self._n_channels = n_channels
         self._rate = bit_rate
         self._n_sample = 0
 
     def generate(self, size):
-        samples = np.arange(self._n_sample, self._n_sample + size)
-        audio = np.sin(2 * np.pi * samples * self._freq / self._rate)
+        if not self._is_finished:
+            samples = np.arange(self._n_sample, self._n_sample + size)[:, np.newaxis]
+            samples = samples.repeat(self._n_channels, axis=1) + (np.arange(self._n_channels) * 100)
+            audio = np.sin(2 * np.pi * samples * self._freq / self._rate)
+
+            if self._has_cutoff:
+                for ichn in xrange(self._n_channels):
+                    zero_cross_idxs = np.where(audio[:-1, ichn] * audio[1:, ichn] <= 0)[0]
+                    if len(zero_cross_idxs) > 0:
+                        cutoff_idx = zero_cross_idxs[0]
+                        audio[(cutoff_idx + 1):, ichn] = 0
+                        self._is_finished = True
+
+        else:
+            audio = np.zeros((size, self._n_channels))
 
         self._n_sample += size
         return audio
 
     def cutoff(self):
         self._has_cutoff = True
-        self._is_finished = True
 
     def isFinished(self):
         return self._is_finished
@@ -42,10 +55,10 @@ class Tone(object):
 
     @staticmethod
     def intervalFromC0(pitch):
-        if len(pitch) == 4:
-            note, octv = pitch[:-2], int(pitch[-2:])
+        if pitch[1] in [ '#', 'b' ]:
+            note, octv = pitch[:2], int(pitch[2:])
         else:
-            note, octv = pitch[:-1], int(pitch[-1:])
+            note, octv = pitch[:1], int(pitch[1:])
 
         return Tone.pitches.index(note) + len(Tone.pitches) * octv
 
@@ -80,14 +93,15 @@ class Note(object):
         self._tones = []
         self._vols = []
 
+        sum_loud = sum( 10 ** (h / 2.) for h in self._harm.values() )
         for intv, loud in self._harm.iteritems():
             harm_pitch = Tone.moveByInterval(self._fund, intv)
             self._tones.append(Tone(harm_pitch, self._n_channels, self._bit_rate))
-            self._vols.append(loud)
+            self._vols.append( 10 ** (loud / 2.) / sum_loud)
 
     def generate(self, size):
         chunks = [ t.generate(size) for t in self._tones ]
-        return NoteGenerator.mix(chunks, self._vols, size)
+        return NoteGenerator.mix(chunks, self._vols, size, self._n_channels)
 
     def cutoff(self):
         for t in self._tones:
@@ -140,7 +154,7 @@ class NoteGenerator(object):
             self._notes.remove(n)
 
         chunks = [ n.generate(size) for n in self._notes ]
-        mixed = self._master_volume * NoteGenerator.mix(chunks, self._volumes, size)
+        mixed = self._master_volume * NoteGenerator.mix(chunks, self._volumes, size, self._n_channels)
         self._wave_data.append(mixed)
         return NoteGenerator.render(mixed, self._dtype)
 
@@ -153,22 +167,22 @@ class NoteGenerator(object):
         wf.close()
 
     @staticmethod
-    def mix(chunks, vols, size):
-        mixed = np.zeros((size,))
+    def mix(chunks, vols, size, n_channels):
+        mixed = np.zeros((size, n_channels))
         for ch, vl in zip(chunks, vols):
             mixed += (vl * ch)
         return mixed
 
     @staticmethod
     def render(ary_data, dtype):
-        n_samples = len(ary_data)
+        n_samples = ary_data.shape[0] * ary_data.shape[1]
 
         dt_max = np.iinfo(dtype).max
         dt_min = np.iinfo(dtype).min
 
         dt_mag = (dt_max - dt_min + 1) / 2
         dt_off = dt_min + dt_mag
-        dt_audio = (dt_mag * ary_data + dt_off).astype(dtype)
+        dt_audio = (dt_mag * ary_data + dt_off).astype(dtype).flatten()
 
         data = struct.pack("%dh" % n_samples, *dt_audio)
         return data
@@ -181,7 +195,7 @@ if __name__ == "__main__":
     RECORD_SECONDS = 5
     CHUNK = 128
     WIDTH = 2
-    CHANNELS = 1
+    CHANNELS = 2
 
     p = pyaudio.PyAudio()
 
